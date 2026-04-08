@@ -52,9 +52,23 @@ impl Display for ApiError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MissingApiKey => {
+                // Intentionally explicit about what this branch does and
+                // does not support so users who exported OPENAI_API_KEY,
+                // XAI_API_KEY, DASHSCOPE_API_KEY, AWS_*, or Google
+                // service-account credentials get an immediate "aha"
+                // instead of assuming a misconfiguration bug. See
+                // rust/README.md § "Providers & Auth Support Matrix"
+                // for the full matrix and the branch differences.
                 write!(
                     f,
-                    "ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is not set; export one before calling the Anthropic API"
+                    "ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is not set; export one before calling the Anthropic API. \
+                     On this branch (`dev/rust`) only Anthropic is wired up \
+                     — OPENAI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, and \
+                     AWS/Google credentials are ignored. Multi-provider \
+                     routing (OpenAI, xAI, DashScope) lives on `main`; AWS \
+                     Bedrock, Google Vertex AI, and Azure OpenAI are not \
+                     supported on any branch yet. See rust/README.md \
+                     § 'Providers & Auth Support Matrix' for details."
                 )
             }
             Self::ExpiredOAuthToken => {
@@ -130,5 +144,48 @@ impl From<serde_json::Error> for ApiError {
 impl From<VarError> for ApiError {
     fn from(value: VarError) -> Self {
         Self::InvalidApiKeyEnv(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_api_key_display_lists_supported_and_unsupported_providers_and_points_at_readme() {
+        // given
+        let error = ApiError::MissingApiKey;
+
+        // when
+        let rendered = format!("{error}");
+
+        // then — the message must keep the grep-stable core so CI
+        // parsers and docs that quote the exact substring continue to
+        // resolve, AND it must tell the user which env vars are
+        // ignored on this branch and where to find the full matrix.
+        assert!(
+            rendered.contains("ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is not set"),
+            "grep-stable prefix must remain intact, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("OPENAI_API_KEY"),
+            "should explicitly call out that OPENAI_API_KEY is ignored on dev/rust, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("XAI_API_KEY"),
+            "should explicitly call out that XAI_API_KEY is ignored on dev/rust, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("DASHSCOPE_API_KEY"),
+            "should explicitly call out that DASHSCOPE_API_KEY is ignored on dev/rust, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("Bedrock") && rendered.contains("Vertex") && rendered.contains("Azure"),
+            "should tell users Bedrock/Vertex/Azure are not supported on any branch, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("rust/README.md"),
+            "should point users at the README matrix for the full story, got: {rendered}"
+        );
     }
 }

@@ -35,6 +35,78 @@ Or authenticate via OAuth:
 claw login
 ```
 
+## Providers & Auth Support Matrix
+
+Before anything else: **know which branch you're building.** Provider
+support differs between `dev/rust` and `main`, and neither branch
+currently supports AWS Bedrock, Google Vertex AI, or Azure OpenAI.
+
+### Supported on `dev/rust` (this branch)
+
+| Provider | Protocol | Auth env var(s) | Base URL env var | Default base URL |
+|---|---|---|---|---|
+| **Anthropic** (direct) | Anthropic Messages API | `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` or OAuth (`claw login`) | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` |
+
+That's it. On `dev/rust`, the `api` crate has a single provider
+backend (`rust/crates/api/src/client.rs`) wired directly to
+Anthropic's Messages API. There is no `providers/` module, no
+auto-routing by model prefix, and no OpenAI-compatible adapter. If you
+export `OPENAI_API_KEY`, `XAI_API_KEY`, or `DASHSCOPE_API_KEY` on this
+branch, claw will ignore them and still fail with `MissingApiKey`
+because it only looks at `ANTHROPIC_*`.
+
+### Additionally supported on `main`
+
+`main` has a multi-provider routing layer under
+`rust/crates/api/src/providers/` that `dev/rust` does not yet carry.
+If you need any of these, build from `main` and wait for the routing
+work to land on `dev/rust`:
+
+| Provider | Protocol | Auth env var | Default base URL |
+|---|---|---|---|
+| **xAI** (Grok) | OpenAI-compatible | `XAI_API_KEY` | `https://api.x.ai/v1` |
+| **OpenAI** | OpenAI Chat Completions | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
+| **DashScope** (Alibaba Qwen) | OpenAI-compatible | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+
+Any service that speaks the OpenAI `/v1/chat/completions` wire format
+also works by pointing `OPENAI_BASE_URL` at it (OpenRouter, Ollama,
+local LLM proxies, etc.).
+
+On `main`, the provider is selected automatically by model-name prefix
+(`claude` → Anthropic, `grok` → xAI, `openai/` or `gpt-` → OpenAI,
+`qwen/` or `qwen-` → DashScope) before falling through to whichever
+credential is present. Prefix routing wins over env-var presence, so
+setting `ANTHROPIC_API_KEY` will not silently hijack an
+`openai/gpt-4.1-mini` request.
+
+### Not supported anywhere in this repo (yet)
+
+These are the provider backends people reasonably expect to work but
+which **do not have any code path** in either `dev/rust` or `main` as
+of this commit. Setting the corresponding cloud SDK env vars will not
+make them work — there is nothing to wire them into.
+
+| Provider | Why it doesn't work today |
+|---|---|
+| **AWS Bedrock** | No SigV4 signer, no Bedrock-specific request adapter, no `AWS_*` credential path in the api crate. Bedrock's Claude endpoint is wire-compatible with a different request envelope than direct Anthropic and would need a dedicated backend. |
+| **Google Vertex AI (Anthropic on Vertex)** | No Google auth (service account / ADC) path, no Vertex-specific base URL adapter. Vertex publishes Claude models under a `projects/<proj>/locations/<loc>/publishers/anthropic/models/<model>:streamRawPredict` URL shape that requires a separate route. |
+| **Azure OpenAI** | OpenAI wire format but uses `api-version` query params, `api-key` header (not `Authorization: Bearer`), and deployment-name routing instead of model IDs. The `main`-branch OpenAI-compatible adapter assumes upstream OpenAI semantics and won't round-trip Azure deployments cleanly. |
+| **Google AI Studio (Gemini)** | Different request shape entirely; not OpenAI-compatible and not Anthropic-compatible. Would need its own backend. |
+
+If you need one of these, the honest answer today is: use a proxy that
+speaks Anthropic or OpenAI on its public side and translates to
+Bedrock/Vertex/Azure/Gemini internally. Setting `ANTHROPIC_BASE_URL`
+or (on `main`) `OPENAI_BASE_URL` at a translation proxy is the
+supported escape hatch until first-class backends land.
+
+### When auth fails
+
+If you see `ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is not set` on
+`dev/rust` after setting, say, `OPENAI_API_KEY`, that's not a bug —
+it's this branch telling you honestly that it doesn't yet know how to
+talk to OpenAI. Either build from `main`, or export
+`ANTHROPIC_API_KEY`, or run `claw login` to use Anthropic OAuth.
+
 ## Features
 
 | Feature | Status |
